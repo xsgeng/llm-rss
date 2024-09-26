@@ -80,8 +80,11 @@ def get_ollama_reply(entry, config, model='qwen2.5:32b') -> dict:
 
 def main(config_path: Path="config.toml"):
     config = toml.load(config_path)
-    rss_path = config['rss_path']
-    period = config['period']
+    rss_path = config.get('rss_path', 'data/rss.xml')
+    period = config.get('period', 24)
+    relevance_threshold = config.get("relevance_threshold", 5)
+    impact_threshold = config.get("impact_threshold", 3)
+
 
     new_feed = Rss201rev2Feed(
         title="Filtered RSS",
@@ -116,7 +119,7 @@ def main(config_path: Path="config.toml"):
             relevance = reply['relevance']
             impact = reply['impact']
 
-            if relevance > 5:
+            if relevance > relevance_threshold and impact > impact_threshold:
                 new_feed.add_item(
                     title=entry.title,
                     link=entry.link,
