@@ -29,14 +29,18 @@ def prepare_prompt(entry):
     abstract: {abstract}
     """
 
+def to_bullets(text_list: list[str]):
+    return "\n".join([f"- {item}" for item in text_list])
+
+
 def prepare_system_prompt(config: dict):
-    research_areas = "\n".join([f"- {area}" for area in config['research_areas']])
-    excluded_areas = "\n".join([f"- {area}" for area in config['excluded_areas']])
+    research_areas = to_bullets(config['research_areas'])
+    excluded_areas = to_bullets(config['excluded_areas'])
 
     return f"""
-    你是一个学术论文评分者。
-    依据提供的题目和摘要和用户的研究领域，对内容进行评价，包括相关性(relevance,0-9)、影响力(impact, 0-9)、理由(reason, str)，以json格式回复。
-    相关性是与与研究领域的相关性；影响力评估文章的价值，即便完全不相关仍可以具有高影响力；理由包括你如何评估相关性与影响力。
+    You are an academic paper evaluator.
+    Based on the provided title, abstract, and the user's research areas, evaluate the content, including its relevance (0-9), impact (0-9), and reason (str). Reply in JSON format.
+    Relevance refers to the correlation with the research areas; impact assesses the value of the article, which can be high even if it's not relevant; the reason should include how you assessed the relevance and impact.
     EXAMPLE JSON OUTPUT:
     {{
         "reason": "The article ...",
@@ -44,9 +48,9 @@ def prepare_system_prompt(config: dict):
         "impact": 5,
     }}
 
-    用户的研究领域：
+    User's research areas:
     {research_areas}
-    排除的领域：
+    Excluded areas:
     {excluded_areas}
     """
 
@@ -62,7 +66,7 @@ def get_ollama_reply(entry, config, model='qwen2.5:32b') -> dict:
             {'role': 'system','content': system_prompt},
             {'role': 'user', 'content': user_prompt}
         ],
-        options=dict(temperature=0)
+        options=dict(temperature=0, format='json')
     )
 
     
@@ -85,13 +89,14 @@ def main(config_path: Path="config.toml"):
         description="Filtered arXiv RSS feed",
         language="en",
     )
-
+    
+    now = datetime.now(tz=timezone.utc)
     def filter_recent(entry):
         entry_time = dateutil.parser.parse(entry['updated'])
         if entry_time.tzinfo is None:
             entry_time = entry_time.replace(tzinfo=timezone.utc)
 
-        return (datetime.now(timezone.utc) - entry_time).total_seconds() < period * 3600
+        return (now - entry_time).total_seconds() < period * 3600
 
     rss_urls = config['urls']
     for url in rss_urls:
@@ -116,7 +121,7 @@ def main(config_path: Path="config.toml"):
                     title=entry.title,
                     link=entry.link,
                     description=f"{relevance=}\n {impact=}\n "+entry.summary,
-                    pubdate=datetime.now()
+                    pubdate=now
                 )
 
     if new_feed.num_items() > 0:

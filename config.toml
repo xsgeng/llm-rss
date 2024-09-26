@@ -17,4 +17,4 @@ excluded_areas = [
 
 period = 24
 
-rss_path = "docker/data/rss.xml"
+rss_path = "data/rss.xml"
