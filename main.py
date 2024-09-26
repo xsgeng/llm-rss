@@ -12,14 +12,6 @@ import toml
 from queue import Queue
 import threading
 
-rss_urls = [
-    "http://feeds.aps.org/rss/recent/prl.xml",
-    "http://feeds.aps.org/rss/recent/pra.xml",
-    "http://feeds.aps.org/rss/recent/prx.xml",
-    "http://rss.arxiv.org/rss/physics.plasm-ph",
-    "http://rss.arxiv.org/rss/physics.comp-ph",
-]
-
 def prepare_prompt(entry):
     title = entry.title
     abstract = entry.summary#.split('\n')[1].split(':')[1]
@@ -39,8 +31,12 @@ def prepare_system_prompt(config: dict):
 
     return f"""
     You are an academic paper evaluator.
-    Based on the provided title, abstract, and the user's research areas, evaluate the content, including its relevance (0-9), impact (0-9), and reason (str). Reply in JSON format.
-    Relevance refers to the correlation with the research areas; impact assesses the value of the article, which can be high even if it's not relevant; the reason should include how you assessed the relevance and impact.
+    Based on the provided title, abstract, and the user's research areas, evaluate the content, including its relevance (0-9), impact (0-9), and reason (str).
+
+    Relevance refers to the correlation with the research areas; impact assesses the value of the article, which can be high even if it's not relevant; 
+    the reason should include how you assessed the relevance and impact.
+    
+    Reply in JSON format.
     EXAMPLE JSON OUTPUT:
     {{
         "reason": "The article ...",
@@ -84,6 +80,9 @@ def main(config_path: Path="config.toml"):
     period = config.get('period', 24)
     relevance_threshold = config.get("relevance_threshold", 5)
     impact_threshold = config.get("impact_threshold", 3)
+    model = config.get('model', None)
+    if model is None:
+        raise ValueError("model is not specified in the config file.")
 
 
     new_feed = Rss201rev2Feed(
@@ -102,30 +101,34 @@ def main(config_path: Path="config.toml"):
         return (now - entry_time).total_seconds() < period * 3600
 
     rss_urls = config['urls']
+    recent_entries = []
     for url in rss_urls:
         online_feed = feedparser.parse(url)
 
         recent_entry = list(filter(filter_recent, online_feed.entries))
 
-        print(f"{len(recent_entry)} articles on {url} to process.")
+        print(f"{len(recent_entry)} articles  to process on {url}.")
 
-        q = Queue()
-        for entry in recent_entry:
-            t = threading.Thread(target=lambda: q.put(get_ollama_reply(entry, config)))
-            t.start()
+        recent_entries.extend(recent_entry)
+    
 
-        for i in trange(len(recent_entry)):
-            reply = q.get()
-            relevance = reply['relevance']
-            impact = reply['impact']
+    q = Queue()
+    for entry in recent_entries:
+        t = threading.Thread(target=lambda: q.put(get_ollama_reply(entry, config, model=model)))
+        t.start()
 
-            if relevance > relevance_threshold and impact > impact_threshold:
-                new_feed.add_item(
-                    title=entry.title,
-                    link=entry.link,
-                    description=f"{relevance=}\n {impact=}\n "+entry.summary,
-                    pubdate=now
-                )
+    for i in trange(len(recent_entries)):
+        reply = q.get()
+        relevance = reply['relevance']
+        impact = reply['impact']
+
+        if relevance > relevance_threshold and impact > impact_threshold:
+            new_feed.add_item(
+                title=entry.title,
+                link=entry.link,
+                description=f"{relevance=}\n {impact=}\n "+entry.summary,
+                pubdate=now
+            )
 
     if new_feed.num_items() > 0:
         with open(rss_path, "w") as f:
