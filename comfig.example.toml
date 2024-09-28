@@ -1,0 +1,27 @@
+urls = [
+    "https://www.nature.com/ncomms.rss",
+    "https://www.nature.com/nphys.rss",
+    "http://feeds.aps.org/rss/recent/prl.xml",
+    "http://rss.arxiv.org/rss/physics.plasm-ph",
+]
+
+research_areas = [
+    "condensed matter physics. experimental methods",
+    "computational physics. ",
+]
+
+excluded_areas = [
+    "fusion plasma physics.",
+]
+
+period = 48
+
+rss_path = "data/rss.xml"
+
+relevance_threshold = 5
+impact_threshold = 3
+
+# model = "ollama/qwen2.5:32b"
+model = "openai/deepseek-chat"
+
+api_key = ""
