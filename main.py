@@ -13,9 +13,11 @@ from queue import Queue
 import threading
 from openai import OpenAI
 
+from adapter import RSSAdapter
+
 def prepare_prompt(entry):
-    title = entry.title
-    abstract = entry.summary#.split('\n')[1].split(':')[1]
+    title = entry["title"]
+    abstract = entry["abstract"]
 
     return f"""
     title: {title}
@@ -133,21 +135,15 @@ def main(config_path: Path="config.toml"):
     )
     
     now = datetime.now(tz=timezone.utc)
-    def filter_recent(entry):
-        entry_time = dateutil.parser.parse(entry['updated'])
-        if entry_time.tzinfo is None:
-            entry_time = entry_time.replace(tzinfo=timezone.utc)
-
-        return (now - entry_time).total_seconds() < period * 3600
 
     rss_urls = config['urls']
     recent_entries = []
     article_titles = []
     for url in rss_urls:
-        online_feed = feedparser.parse(url)
+        rss_adapter = RSSAdapter(url)
 
-        recent_entry = list(filter(filter_recent, online_feed.entries))
-
+        recent_entry = list(rss_adapter.recent_entries(hours=period))
+        
         # filter duplicated
         for entry in recent_entry:
             if entry['title'] not in article_titles:
@@ -175,9 +171,9 @@ def main(config_path: Path="config.toml"):
 
         if relevance > relevance_threshold and impact > impact_threshold:
             new_feed.add_item(
-                title=entry.title,
-                link=entry.link,
-                description=f"{relevance=}\n {impact=}\n "+entry.summary,
+                title=entry["title"],
+                link=entry["link"],
+                description=f"{relevance=}\n {impact=}\n "+entry["abstract"],
                 pubdate=now
             )
 
