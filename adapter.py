@@ -62,6 +62,8 @@ class RSSAdapter(BaseRSSAdapter):
             return IOPAdapter(rss_url)
         elif 'biorxiv.org' in rss_url:
             return BioRxivAdapter(rss_url)
+        elif 'cell.com' in rss_url:
+            return CellAdapter(rss_url)
         else:
             raise ValueError("Unsupported RSS feed URL")
 
@@ -99,3 +101,10 @@ class AIPAdapter(BaseRSSAdapter):
 
 class IOPAdapter(BaseRSSAdapter):
     pass
+
+class CellAdapter(BaseRSSAdapter):
+    def _get_entry_updated(self, entry):
+        entry_time = dateutil.parser.parse(entry['updated'])
+        entry_time = entry_time.replace(tzinfo=timezone.utc)
+        return entry_time
+
