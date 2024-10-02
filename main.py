@@ -217,7 +217,15 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
             new_feed.write(f, "utf-8")
     else:
         print("not updated")
+        
+def _main(config_dir: Path='config.d', config_path: Path=None):
+    if config_path is None:
+        for config_path in config_dir.glob("*.toml"):
+            print(f"{config_path}:")
+            main(config_path=config_path)
+    else:
+        main(config_path=config_path)
 
 if __name__ == "__main__":
-    typer.run(main)
+    typer.run(_main)
 

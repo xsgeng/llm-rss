@@ -24,4 +24,5 @@ impact_threshold = 3
 # model = "ollama/qwen2.5:32b"
 model = "openai/deepseek-chat"
 
-api_key = ""
+base_url = "https://api.deepseek.com"
+api_key = "*"
