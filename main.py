@@ -34,63 +34,92 @@ def prepare_system_prompt(config: dict):
 
     return f"""
     You are an academic paper evaluator.
-    Based on the provided title, abstract, and the user's research areas, evaluate the content, including its relevance (0-9), impact (0-9), and reason (str).
+    Based on the provided title, abstract, and the user's research areas, evaluate the content, including its relevance (0-9), impact (0-9).
 
-    Relevance refers to the correlation with the research areas; impact assesses the value of the article, which can be high even if it's not relevant; 
-    the reason should include how you assessed the relevance and impact.
-    
-    Reply in JSON format.
-    EXAMPLE JSON OUTPUT:
-    {{
-        "reason": "The article ...",
-        "relevance": 3,
-        "impact": 5,
-    }}
+    Relevance refers to the correlation with the research areas; impact assesses the value of the article, which can be high even if it's not relevant.
+     
+    Please reply how you assessed the relevance of the article to the reasearch areas and the potential impact of the article.
+    Your reply should be less than 500 words. Reply can be short if it is totally irrelevant.
 
     User's research areas:
     {research_areas}
     Excluded areas:
     {excluded_areas}
     """
+    
+    
+def prepare_json_prompt():
+    return """
+    Reply in JSON format.
+    EXAMPLE JSON OUTPUT:
+    {{
+        "relevance": 3,
+        "impact": 5,
+    }}
+"""
 
 
-def get_ollama_reply(entry, config, model='qwen2.5:32b') -> dict:
+def get_ollama_reply(entry, config, model, base_url='localhost:11434') -> dict:
+    client = ollama.Client(host=base_url)
     system_prompt = prepare_system_prompt(config)
-    
     user_prompt = prepare_prompt(entry)
+    json_prompt = prepare_json_prompt()
     
-    response = ollama.chat(
+    messages = [{"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}]
+    
+    response = client.chat(
         model=model,
-        messages=[
-            {'role': 'system','content': system_prompt},
-            {'role': 'user', 'content': user_prompt}
-        ],
-        options=dict(num_ctx=2048, temperature=0, format='json', steam=False)
-    )
-
+        messages=messages,
+        stream=False,
+        options=dict(num_ctx=2048, temperature=0)
+    )['message']['content']
+    # print(response)
+    
+    messages += [{"role": "assistant", "content": response},
+                {"role": "user", "content": json_prompt}]
+    json_reply = client.chat(
+        model=model,
+        messages=messages,
+        format='json',
+        stream=False,
+        options=dict(num_ctx=2048, temperature=0)
+    )['message']['content']
     
     try:
-        response_parse = json.loads(response['message']['content'])
+        response_parse = json.loads(json_reply)
     except json.decoder.JSONDecodeError:
         response_parse = {"reason": "decode error", "relevance": 0, "impact": 0}
 
     return response_parse
 
 
-def get_openai_reply(entry, config, model, api_key) -> dict:
+def get_openai_reply(entry, config, base_url, model, api_key) -> dict:
     client = OpenAI(
         api_key=api_key,
-        base_url="https://api.deepseek.com/beta",
+        base_url=base_url,
     )
 
     system_prompt = prepare_system_prompt(config)
     
     user_prompt = prepare_prompt(entry)
+    json_prompt = prepare_json_prompt()
 
     messages = [{"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}]
     
     response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=2048,
+        temperature=0,
+        stream=False
+    ).choices[0].message.content
+    
+    messages += [{"role": "assistant", "content": response},
+                {"role": "user", "content": json_prompt}]
+                 
+    json_reply = client.chat.completions.create(
         model=model,
         messages=messages,
         response_format={
@@ -99,17 +128,17 @@ def get_openai_reply(entry, config, model, api_key) -> dict:
         max_tokens=2048,
         temperature=0,
         stream=False
-    )
+    ).choices[0].message.content
     
     try:
-        response_parse = json.loads(response.choices[0].message.content)
+        response_parse = json.loads(json_reply)
     except json.decoder.JSONDecodeError:
         response_parse = {"reason": "decode error", "relevance": 0, "impact": 0}
 
     return response_parse
 
 
-def main(config_path: Path="config.toml"):
+def main(config_path: Path="config.toml", dryrun: bool=False):
     config = toml.load(config_path)
     rss_path = config.get('rss_path', 'data/rss.xml')
     period = config.get('period', 24)
@@ -124,6 +153,12 @@ def main(config_path: Path="config.toml"):
     if model_type not in ['ollama', 'openai']:
         raise ValueError("Invalid model type. Must be 'ollama' or 'openai'.")
 
+    base_url = config.get('base_url', None)
+    if model_type == 'ollama' and base_url is None:
+        base_url = 'localhost:11434'
+    if model_type == 'openai' and base_url is None:
+        raise ValueError("base_url is not specified in the config file.")
+    
     api_key = config.get('api_key', None)
 
 
@@ -159,9 +194,9 @@ def main(config_path: Path="config.toml"):
     q = Queue()
     for entry in recent_entries:
         if model_type == 'ollama':
-            t = threading.Thread(target=lambda: q.put(get_ollama_reply(entry, config, model=model_name)))
+            t = threading.Thread(target=lambda: q.put(get_ollama_reply(entry, config, model=model_name, base_url=base_url)))
         elif model_type == 'openai':
-            t = threading.Thread(target=lambda: q.put(get_openai_reply(entry, config, model=model_name, api_key=api_key)))
+            t = threading.Thread(target=lambda: q.put(get_openai_reply(entry, config, model=model_name, base_url=base_url, api_key=api_key)))
         t.start()
 
     for i in trange(len(recent_entries)):
@@ -177,7 +212,7 @@ def main(config_path: Path="config.toml"):
                 pubdate=now
             )
 
-    if new_feed.num_items() > 0:
+    if new_feed.num_items() > 0 and not dryrun:
         with open(rss_path, "w") as f:
             new_feed.write(f, "utf-8")
     else:
