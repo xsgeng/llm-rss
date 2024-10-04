@@ -186,18 +186,15 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
     for url in rss_urls:
         rss_adapter = RSSAdapter(url)
 
-        recent_articles_ = list(rss_adapter.recent_articles(hours=period))
-        
-        # filter duplicated
-        for article in recent_articles_:
+        n_article = 0
+        for article in rss_adapter.recent_articles(hours=period):
+            # filter duplicated
             if article.title not in article_titles:
                 article_titles.append(article.title)
-            else:
-                recent_articles_.remove(article)
+                recent_articles.append(article)
+                n_article += 1
 
-        print(f"{len(recent_articles_)} articles  to process on {url}.")
-
-        recent_articles.extend(recent_articles_)
+        print(f"{n_article} articles  to process on {url}.")
     
     tokens = Queue()
     messages = Queue()
