@@ -13,7 +13,7 @@ from queue import Queue
 import threading
 from openai import OpenAI
 
-from adapter import RSSAdapter
+from adapter import RSSAdapter, ArticleInfo
 
 from pydantic import BaseModel
 
@@ -22,9 +22,9 @@ class Reply(BaseModel):
     impact: int
     reason: str | None = None
 
-def prepare_prompt(entry):
-    title = entry["title"]
-    abstract = entry["abstract"]
+def prepare_prompt(article: ArticleInfo):
+    title = article.title
+    abstract = article.abstract
 
     return f"""
     title: {title}
@@ -66,10 +66,10 @@ def prepare_json_prompt():
 """
 
 
-def get_ollama_reply(entry, config, model, base_url='localhost:11434') -> dict:
+def get_ollama_reply(article, config, model, base_url='localhost:11434') -> dict:
     client = ollama.Client(host=base_url)
     system_prompt = prepare_system_prompt(config)
-    user_prompt = prepare_prompt(entry)
+    user_prompt = prepare_prompt(article)
     json_prompt = prepare_json_prompt()
     
     messages = [{"role": "system", "content": system_prompt},
@@ -96,13 +96,13 @@ def get_ollama_reply(entry, config, model, base_url='localhost:11434') -> dict:
     try:
         response_parse = Reply.model_validate_json(json_reply, strict=True)
     except ValueError:
-        print(f"Error decoding article: {entry['title']}")
+        print(f"Error decoding article: {article.title}")
         response_parse = Reply(relevance=0, impact=0, reason="decode error")
 
     return response_parse
 
 
-def get_openai_reply(entry, config, base_url, model, api_key) -> dict:
+def get_openai_reply(article, config, base_url, model, api_key) -> dict:
     client = OpenAI(
         api_key=api_key,
         base_url=base_url,
@@ -110,7 +110,7 @@ def get_openai_reply(entry, config, base_url, model, api_key) -> dict:
 
     system_prompt = prepare_system_prompt(config)
     
-    user_prompt = prepare_prompt(entry)
+    user_prompt = prepare_prompt(article)
     json_prompt = prepare_json_prompt()
 
     messages = [{"role": "system", "content": system_prompt},
@@ -181,57 +181,57 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
     now = datetime.now(tz=timezone.utc)
 
     rss_urls = config['urls']
-    recent_entries = []
+    recent_articles: list[ArticleInfo] = []
     article_titles = []
     for url in rss_urls:
         rss_adapter = RSSAdapter(url)
 
-        recent_entry = list(rss_adapter.recent_entries(hours=period))
+        recent_articles_ = list(rss_adapter.recent_articles(hours=period))
         
         # filter duplicated
-        for entry in recent_entry:
-            if entry['title'] not in article_titles:
-                article_titles.append(entry['title'])
+        for article in recent_articles_:
+            if article.title not in article_titles:
+                article_titles.append(article.title)
             else:
-                recent_entry.remove(entry)
+                recent_articles_.remove(article)
 
-        print(f"{len(recent_entry)} articles  to process on {url}.")
+        print(f"{len(recent_articles_)} articles  to process on {url}.")
 
-        recent_entries.extend(recent_entry)
+        recent_articles.extend(recent_articles_)
     
     tokens = Queue()
     messages = Queue()
     
     # prepare concurrent requests
     if concurrent_requests is None:
-        concurrent_requests = len(recent_entries)
+        concurrent_requests = len(recent_articles)
     for i in range(concurrent_requests):
         tokens.put(i)
     
-    def thread_worker():
+    def thread_worker(article):
         token = tokens.get()
         if model_type == 'ollama':
-            reply = get_ollama_reply(entry, config, model=model_name, base_url=base_url)
+            reply = get_ollama_reply(article, config, model=model_name, base_url=base_url)
         elif model_type == 'openai':
-            reply = get_openai_reply(entry, config, model=model_name, base_url=base_url, api_key=api_key)
+            reply = get_openai_reply(article, config, model=model_name, base_url=base_url, api_key=api_key)
         
         messages.put(reply)
         tokens.put(token)
         
-    for entry in recent_entries:
-        t = threading.Thread(target=thread_worker)
+    for article in recent_articles:
+        t = threading.Thread(target=thread_worker, args=(article, ))
         t.start()
 
-    for i in trange(len(recent_entries)):
+    for article in tqdm(recent_articles):
         reply: Reply = messages.get()
         relevance = reply.relevance
         impact = reply.impact
 
         if relevance > relevance_threshold and impact > impact_threshold:
             new_feed.add_item(
-                title=entry["title"],
-                link=entry["link"],
-                description=f"{relevance=}\n {impact=}\n "+entry["abstract"],
+                title=article.title,
+                link=article.link,
+                description=f"{relevance=}\n {impact=}\n "+article.abstract,
                 pubdate=now
             )
 

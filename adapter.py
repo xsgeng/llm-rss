@@ -1,7 +1,30 @@
-import feedparser
-from datetime import datetime, timezone, timedelta
-import dateutil.parser
+from datetime import datetime, timedelta, timezone
 from typing import Iterator
+
+import dateutil.parser
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+
+from pydantic import BaseModel, field_validator, HttpUrl, AwareDatetime
+
+class ArticleInfo(BaseModel):
+    title: str
+    link: HttpUrl
+    abstract: str
+    updated: datetime
+    authors: str
+
+    @field_validator("updated", mode='before')
+    @classmethod
+    def ensure_tzinfo(cls, value: str):
+        if isinstance(value, str):
+            # 尝试解析字符串为datetime对象
+            value = dateutil.parser.parse(value)
+        
+        if isinstance(value, datetime) and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
 class BaseRSSAdapter:
     def __init__(self, rss_url):
@@ -9,43 +32,43 @@ class BaseRSSAdapter:
         self.feed = feedparser.parse(rss_url)
 
     @property
-    def entries(self) -> Iterator[dict]:
+    def articles(self) -> Iterator[ArticleInfo]:
         for entry in self.feed.entries:
-            yield {
-                "title": self._get_entry_title(entry),
-                "link": self._get_entry_link(entry),
-                "abstract": self._get_entry_abstract(entry),
-                "updated": self._get_entry_updated(entry),
-                "authors": self._get_entry_authors(entry)
-            }
+            yield ArticleInfo(
+                title=self._get_entry_title(entry),
+                link=self._get_entry_link(entry),
+                abstract=self._get_entry_abstract(entry),
+                updated=self._get_entry_updated(entry),
+                authors=self._get_entry_authors(entry)
+            )
 
     def __iter__(self):
         """
         This method is used to make the class iterable.
         """
-        return self.entries()
+        return self.articles
 
-    def recent_entries(self, hours=24) -> Iterator[dict]:
-        def is_recent(entry):
-            return datetime.now(timezone.utc) - entry['updated'] < timedelta(hours=hours)
+    def recent_articles(self, hours=24) -> Iterator[ArticleInfo]:
+        def is_recent(articleinfo):
+            return datetime.now(timezone.utc) - articleinfo.updated < timedelta(hours=hours)
 
-        return filter(is_recent, self.entries)
+        return filter(is_recent, self.articles)
 
-    def _get_entry_title(self, entry):
+    def _get_entry_title(self, entry) -> str:
         return entry['title']
 
-    def _get_entry_link(self, entry):
+    def _get_entry_link(self, entry) -> str:
         return entry['link']
 
-    def _get_entry_abstract(self, entry):
+    def _get_entry_abstract(self, entry) -> str:
         return entry['summary']
 
-    def _get_entry_updated(self, entry):
-        return dateutil.parser.parse(entry['updated'])
+    def _get_entry_updated(self, entry) -> str:
+        return entry['updated']
 
-    def _get_entry_authors(self, entry):
+    def _get_entry_authors(self, entry) -> str:
         if 'authors' in entry and entry['authors']: 
-            return ','.join([author['name'] for author in entry['authors']])
+            return ', '.join([author['name'] for author in entry['authors']])
         return ''
 
 class RSSAdapter(BaseRSSAdapter):
@@ -69,30 +92,22 @@ class RSSAdapter(BaseRSSAdapter):
 
 class NatureAdapter(BaseRSSAdapter):
     def _get_entry_abstract(self, entry):
-        # Nature abstract is after <p></p> block in entry['summary']
-        return entry['summary'].split('</p>')[1]
+        # Nature abstract is after <p></p> block in entry.summary
+        return entry.summary.split('</p>')[1]
 
-    def _get_entry_updated(self, entry):
-        # Nature has no zoneinfo, use utc
-        entry_time = dateutil.parser.parse(entry['updated'])
-        entry_time = entry_time.replace(tzinfo=timezone.utc)
-        return entry_time
 
 class ArxivAdapter(BaseRSSAdapter):
     def _get_entry_abstract(self, entry):
-        return entry['summary'].split('Abstract: ')[1]
+        return entry.summary.split('Abstract: ')[1]
     
     
 class BioRxivAdapter(BaseRSSAdapter):
-    def _get_entry_updated(self, entry):
-        entry_time = dateutil.parser.parse(entry['updated'])
-        entry_time = entry_time.replace(tzinfo=timezone.utc)
-        return entry_time
+    pass
 
 class APSAdapter(BaseRSSAdapter):
     def _get_entry_abstract(self, entry):
-        if '<p>' in entry['summary']:
-            return entry['summary'].split('<p>')[1].split('</p>')[0]
+        if '<p>' in entry.summary:
+            return entry.summary.split('<p>')[1].split('</p>')[0]
         else:
             return ''
 
