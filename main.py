@@ -15,6 +15,13 @@ from openai import OpenAI
 
 from adapter import RSSAdapter
 
+from pydantic import BaseModel
+
+class Reply(BaseModel):
+    relevance: int
+    impact: int
+    reason: str | None = None
+
 def prepare_prompt(entry):
     title = entry["title"]
     abstract = entry["abstract"]
@@ -52,10 +59,10 @@ def prepare_json_prompt():
     return """
     Reply in JSON format.
     EXAMPLE JSON OUTPUT:
-    {{
+    {
         "relevance": 3,
         "impact": 5,
-    }}
+    }
 """
 
 
@@ -87,9 +94,10 @@ def get_ollama_reply(entry, config, model, base_url='localhost:11434') -> dict:
     )['message']['content']
     
     try:
-        response_parse = json.loads(json_reply)
-    except json.decoder.JSONDecodeError:
-        response_parse = {"reason": "decode error", "relevance": 0, "impact": 0}
+        response_parse = Reply.model_validate_json(json_reply, strict=True)
+    except ValueError:
+        print(f"Error decoding article: {entry['title']}")
+        response_parse = Reply(relevance=0, impact=0, reason="decode error")
 
     return response_parse
 
@@ -131,9 +139,9 @@ def get_openai_reply(entry, config, base_url, model, api_key) -> dict:
     ).choices[0].message.content
     
     try:
-        response_parse = json.loads(json_reply)
-    except json.decoder.JSONDecodeError:
-        response_parse = {"reason": "decode error", "relevance": 0, "impact": 0}
+        response_parse = Reply.model_validate_json(json_reply, strict=True)
+    except ValueError:
+        response_parse = Reply(relevance=0, impact=0, reason="decode error")
 
     return response_parse
 
@@ -144,6 +152,7 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
     period = config.get('period', 24)
     relevance_threshold = config.get("relevance_threshold", 5)
     impact_threshold = config.get("impact_threshold", 3)
+    concurrent_requests = config.get("concurrent_requests", None)
 
     model = config.get('model', None)
     if model is None:
@@ -190,19 +199,33 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
 
         recent_entries.extend(recent_entry)
     
-
-    q = Queue()
-    for entry in recent_entries:
+    tokens = Queue()
+    messages = Queue()
+    
+    # prepare concurrent requests
+    if concurrent_requests is None:
+        concurrent_requests = len(recent_entries)
+    for i in range(concurrent_requests):
+        tokens.put(i)
+    
+    def thread_worker():
+        token = tokens.get()
         if model_type == 'ollama':
-            t = threading.Thread(target=lambda: q.put(get_ollama_reply(entry, config, model=model_name, base_url=base_url)))
+            reply = get_ollama_reply(entry, config, model=model_name, base_url=base_url)
         elif model_type == 'openai':
-            t = threading.Thread(target=lambda: q.put(get_openai_reply(entry, config, model=model_name, base_url=base_url, api_key=api_key)))
+            reply = get_openai_reply(entry, config, model=model_name, base_url=base_url, api_key=api_key)
+        
+        messages.put(reply)
+        tokens.put(token)
+        
+    for entry in recent_entries:
+        t = threading.Thread(target=thread_worker)
         t.start()
 
     for i in trange(len(recent_entries)):
-        reply = q.get()
-        relevance = reply['relevance']
-        impact = reply['impact']
+        reply: Reply = messages.get()
+        relevance = reply.relevance
+        impact = reply.impact
 
         if relevance > relevance_threshold and impact > impact_threshold:
             new_feed.add_item(

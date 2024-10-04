@@ -22,6 +22,8 @@ relevance_threshold = 5
 impact_threshold = 3
 
 # model = "ollama/qwen2.5:32b"
+# concurrent_requests = 2
+
 model = "openai/deepseek-chat"
 
 base_url = "https://api.deepseek.com"
