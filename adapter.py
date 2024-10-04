@@ -47,12 +47,12 @@ class BaseRSSAdapter:
         This method is used to make the class iterable.
         """
         return self.articles
+    
+    def recent_filter(self, hours):
+        return lambda articleinfo: datetime.now(timezone.utc) - articleinfo.updated < timedelta(hours=hours)
 
     def recent_articles(self, hours=24) -> Iterator[ArticleInfo]:
-        def is_recent(articleinfo):
-            return datetime.now(timezone.utc) - articleinfo.updated < timedelta(hours=hours)
-
-        return filter(is_recent, self.articles)
+        return filter(self.recent_filter(hours=hours), self.articles)
 
     def _get_entry_title(self, entry) -> str:
         return entry['title']
@@ -95,6 +95,10 @@ class NatureAdapter(BaseRSSAdapter):
         # Nature abstract is after <p></p> block in entry.summary
         return entry.summary.split('</p>')[1]
 
+    def recent_filter(self, hours):
+        # no tzinfo, add 24 hours to the filter
+        hours += 24
+        return lambda articleinfo: datetime.now(timezone.utc) - articleinfo.updated < timedelta(hours=hours)
 
 class ArxivAdapter(BaseRSSAdapter):
     def _get_entry_abstract(self, entry):
@@ -102,7 +106,10 @@ class ArxivAdapter(BaseRSSAdapter):
     
     
 class BioRxivAdapter(BaseRSSAdapter):
-    pass
+    def recent_filter(self, hours):
+        # no tzinfo, add 24 hours to the filter
+        hours += 24
+        return lambda articleinfo: datetime.now(timezone.utc) - articleinfo.updated < timedelta(hours=hours)
 
 class APSAdapter(BaseRSSAdapter):
     def _get_entry_abstract(self, entry):
@@ -118,8 +125,5 @@ class IOPAdapter(BaseRSSAdapter):
     pass
 
 class CellAdapter(BaseRSSAdapter):
-    def _get_entry_updated(self, entry):
-        entry_time = dateutil.parser.parse(entry['updated'])
-        entry_time = entry_time.replace(tzinfo=timezone.utc)
-        return entry_time
+    pass
 
