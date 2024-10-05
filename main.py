@@ -154,6 +154,7 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
     relevance_threshold = config.get("relevance_threshold", 5)
     impact_threshold = config.get("impact_threshold", 3)
     concurrent_requests = config.get("concurrent_requests", None)
+    crawl_abstract = config.get("crawl_abstract", False)
 
     model = config.get('model', None)
     if model is None:
@@ -175,7 +176,7 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
     new_feed = Rss201rev2Feed(
         title="Filtered RSS",
         link="myserver",
-        description="Filtered arXiv RSS feed",
+        description="Filtered RSS feed",
         language="en",
     )
     
@@ -195,8 +196,8 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
                 if article.title not in article_titles:
                     article_titles.append(article.title)
                     recent_articles.append(article)
-
-                    crawlers.append(pool.submit(rss_adapter.crawl_abstract, article=article))
+                    if crawl_abstract:
+                        crawlers.append(pool.submit(rss_adapter.crawl_abstract, article=article))
                     
                     n_article += 1
 
@@ -205,41 +206,35 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
     for crawler in tqdm(crawlers, desc='waiting for crawlers.'):
         crawler.result()  # wait for all threads to complete
         
-    tokens = Queue()
     messages = Queue()
     
     # prepare concurrent requests
     if concurrent_requests is None:
         concurrent_requests = len(recent_articles)
-    for i in range(concurrent_requests):
-        tokens.put(i)
-    
+
     def thread_worker(article):
-        token = tokens.get()
         if model_type == 'ollama':
             reply = get_ollama_reply(article, config, model=model_name, base_url=base_url)
         elif model_type == 'openai':
             reply = get_openai_reply(article, config, model=model_name, base_url=base_url, api_key=api_key)
         
         messages.put(reply)
-        tokens.put(token)
+    
+    with ThreadPoolExecutor(max_workers=concurrent_requests) as pool:
+        pool.map(thread_worker, recent_articles)
         
-    for article in recent_articles:
-        t = threading.Thread(target=thread_worker, args=(article, ))
-        t.start()
+        for article in tqdm(recent_articles):
+            reply: Reply = messages.get()
+            relevance = reply.relevance
+            impact = reply.impact
 
-    for article in tqdm(recent_articles):
-        reply: Reply = messages.get()
-        relevance = reply.relevance
-        impact = reply.impact
-
-        if relevance > relevance_threshold and impact > impact_threshold:
-            new_feed.add_item(
-                title=article.title,
-                link=str(article.link),
-                description=f"{relevance=}\n {impact=}\n "+article.abstract,
-                pubdate=now
-            )
+            if relevance > relevance_threshold and impact > impact_threshold:
+                new_feed.add_item(
+                    title=article.title,
+                    link=str(article.link),
+                    description=f"{relevance=}\n {impact=}\n "+article.abstract,
+                    pubdate=now
+                )
 
     if new_feed.num_items() > 0 and not dryrun:
         with open(rss_path, "w") as f:
