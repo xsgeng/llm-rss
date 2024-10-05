@@ -1,3 +1,4 @@
+# List of RSS feed URLs to crawl
 urls = [
     "https://www.nature.com/ncomms.rss",
     "https://www.nature.com/nphys.rss",
@@ -5,26 +6,45 @@ urls = [
     "http://rss.arxiv.org/rss/physics.plasm-ph",
 ]
 
+# List of research areas of interest
 research_areas = [
     "condensed matter physics. experimental methods",
     "computational physics. ",
 ]
 
+# List of research areas to exclude
 excluded_areas = [
     "fusion plasma physics.",
 ]
 
-period = 48
+# Some RSS does not provide full abstract.
+# Whether to crawl and include abstracts in the evaluation (true/false).
+# Use at your own risk.
+# crawl_abstract = false
 
+# How recent the articles should be included (in hours).
+# Should be the same with your cron period
+period = 24
+
+# Path to save the generated RSS feed
 rss_path = "data/rss.xml"
 
+# Threshold for relevance score to include an article (0-9)
 relevance_threshold = 5
+
+# Threshold for impact score to include an article (0-9)
 impact_threshold = 3
 
-# model = "ollama/qwen2.5:32b"
-# concurrent_requests = 2
+# Model configuration for evaluation. ollama or openai compatible.
 
+# model = "ollama/qwen2.5:32b"
 model = "openai/deepseek-chat"
 
+# Base URL for the API
 base_url = "https://api.deepseek.com"
+
+# API key for authentication
 api_key = "*"
+
+# Number of concurrent requests to llm provider
+# concurrent_requests = 2

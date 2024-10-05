@@ -1,0 +1,9 @@
+feedparser
+typer
+django
+tqdm
+toml
+openai
+python-dateutil
+ollama
+pydantic

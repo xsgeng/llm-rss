@@ -133,6 +133,10 @@ class APSAdapter(BaseRSSAdapter):
             return entry.summary.split('<p>')[1].split('</p>')[0]
         else:
             return ''
+        
+    def crawl_abstract(self, article: ArticleInfo):
+        """TODO"""
+        pass
 
 class AIPAdapter(BaseRSSAdapter):
     pass
