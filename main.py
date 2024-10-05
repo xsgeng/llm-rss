@@ -1,21 +1,22 @@
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from queue import Queue
 
 import dateutil.parser
 import feedparser
 import ollama
+import toml
 import typer
 from django.utils.feedgenerator import Rss201rev2Feed
-from tqdm import tqdm, trange
-import toml
-from queue import Queue
-import threading
 from openai import OpenAI
-
-from adapter import RSSAdapter, ArticleInfo
-
 from pydantic import BaseModel
+from tqdm import tqdm, trange
+
+from adapter import ArticleInfo, RSSAdapter
+
 
 class Reply(BaseModel):
     relevance: int
@@ -63,7 +64,7 @@ def prepare_json_prompt():
         "relevance": 3,
         "impact": 5,
     }
-"""
+    """
 
 
 def get_ollama_reply(article, config, model, base_url='localhost:11434') -> dict:
@@ -183,19 +184,27 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
     rss_urls = config['urls']
     recent_articles: list[ArticleInfo] = []
     article_titles = []
-    for url in rss_urls:
-        rss_adapter = RSSAdapter(url)
+    crawlers = []
+    with ThreadPoolExecutor() as pool:
+        for url in rss_urls:
+            rss_adapter = RSSAdapter(url)
 
-        n_article = 0
-        for article in rss_adapter.recent_articles(hours=period):
-            # filter duplicated
-            if article.title not in article_titles:
-                article_titles.append(article.title)
-                recent_articles.append(article)
-                n_article += 1
+            n_article = 0
+            for article in rss_adapter.recent_articles(hours=period):
+                # filter duplicated
+                if article.title not in article_titles:
+                    article_titles.append(article.title)
+                    recent_articles.append(article)
 
-        print(f"{n_article} articles  to process on {url}.")
+                    crawlers.append(pool.submit(rss_adapter.crawl_abstract, article=article))
+                    
+                    n_article += 1
+
+            print(f"{n_article} articles  to process on {url}.")
     
+    for crawler in tqdm(crawlers, desc='waiting for crawlers.'):
+        crawler.result()  # wait for all threads to complete
+        
     tokens = Queue()
     messages = Queue()
     
@@ -227,7 +236,7 @@ def main(config_path: Path="config.toml", dryrun: bool=False):
         if relevance > relevance_threshold and impact > impact_threshold:
             new_feed.add_item(
                 title=article.title,
-                link=article.link,
+                link=str(article.link),
                 description=f"{relevance=}\n {impact=}\n "+article.abstract,
                 pubdate=now
             )

@@ -70,6 +70,9 @@ class BaseRSSAdapter:
         if 'authors' in entry and entry['authors']: 
             return ', '.join([author['name'] for author in entry['authors']])
         return ''
+    
+    def crawl_abstract(self, article: ArticleInfo):
+        pass
 
 class RSSAdapter(BaseRSSAdapter):
     def __new__(cls, rss_url):
@@ -99,6 +102,19 @@ class NatureAdapter(BaseRSSAdapter):
         # no tzinfo, add 24 hours to the filter
         hours += 24
         return lambda articleinfo: datetime.now(timezone.utc) - articleinfo.updated < timedelta(hours=hours)
+    
+    def crawl_abstract(self, article: ArticleInfo):
+        # 发送HTTP请求获取页面内容
+        response = requests.get(article.link)
+        response.raise_for_status()  # 检查请求是否成功
+
+        # 使用BeautifulSoup解析页面内容
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # 提取标题和摘要
+        abstract = soup.find('meta', attrs={'name': 'dc.description'})['content']
+
+        article.abstract = abstract
 
 class ArxivAdapter(BaseRSSAdapter):
     def _get_entry_abstract(self, entry):
